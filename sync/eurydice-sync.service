@@ -1,0 +1,10 @@
+[Unit]
+Description=eurydice-sync (contas do Passbolt = lista de pessoas autorizadas)
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/eurydice/deploy
+# Por padrão roda em dry-run. Para aplicar: SYNC_APPLY=true no .env (depois de conferir o plano).
+ExecStart=/usr/bin/docker compose --profile sync run --rm sync

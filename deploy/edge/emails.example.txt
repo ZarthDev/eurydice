@@ -1,0 +1,6 @@
+# Pessoas autorizadas: uma por linha. Este arquivo é a fonte única:
+# a borda (oauth2-proxy) só deixa entrar quem está aqui e o eurydice-sync
+# cria/suspende as contas do Passbolt a partir dele.
+# Copie para emails.txt (que não vai para o git).
+ana@exemplo.com.br
+bruno@exemplo.com.br

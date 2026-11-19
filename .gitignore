@@ -1,0 +1,19 @@
+# segredos e dados locais: nunca versionar
+.env
+deploy/.env
+deploy/secrets/
+deploy/edge/emails.txt
+deploy/certs/
+backup/recipients.txt
+custody/out/
+*.agekey
+*.age
+*.key
+*.pass
+*.pem
+*.sql
+*.tar.zst
+# build
+sync/eurydice-sync
+dist/
+.DS_Store

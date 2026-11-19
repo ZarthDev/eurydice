@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sync
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sync/go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CGO_ENABLED=0 go build -o /dev/null .
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -S warning backup/*.sh custody/*.sh
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose config
+        working-directory: deploy
+        run: |
+          sed -e 's/^DB_PASSWORD=$/DB_PASSWORD=x/' -e 's/^OIDC_CLIENT_ID=$/OIDC_CLIENT_ID=x/' \
+              -e 's/^OIDC_CLIENT_SECRET=$/OIDC_CLIENT_SECRET=x/' -e 's/^COOKIE_SECRET=$/COOKIE_SECRET=x/' .env.example > .env
+          cp edge/emails.example.txt edge/emails.txt
+          docker compose --profile sync config --quiet

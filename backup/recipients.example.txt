@@ -1,0 +1,5 @@
+# Chaves PÚBLICAS age dos custodiantes, uma por linha (age1...).
+# Gere em cada máquina de custodiante com: age-keygen -o custodiante.agekey
+# e copie só a linha "public key" para cá. Copie este arquivo para recipients.txt.
+# NUNCA coloque uma AGE-SECRET-KEY aqui: o script recusa.
+age1exemploexemploexemploexemploexemploexemploexemploexemploexemplo

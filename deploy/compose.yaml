@@ -1,0 +1,123 @@
+# Eurydice: Passbolt CE oficial + MariaDB + borda OIDC (oauth2-proxy).
+# O Passbolt não publica porta nenhuma: o único caminho até ele é a borda.
+#
+#   cp .env.example .env    # preencha
+#   docker compose up -d
+name: eurydice
+
+services:
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_RANDOM_ROOT_PASSWORD: "true"
+      MARIADB_DATABASE: passbolt
+      MARIADB_USER: passbolt
+      MARIADB_PASSWORD: ${DB_PASSWORD:?defina DB_PASSWORD no .env}
+    volumes:
+      - db:/var/lib/mysql
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  passbolt:
+    # Fixe a versão em PASSBOLT_TAG e só suba depois de ler o changelog.
+    image: passbolt/passbolt:${PASSBOLT_TAG:-latest-ce}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_FULL_BASE_URL: ${PUBLIC_URL:?defina PUBLIC_URL no .env}
+      DATASOURCES_DEFAULT_HOST: db
+      DATASOURCES_DEFAULT_DATABASE: passbolt
+      DATASOURCES_DEFAULT_USERNAME: passbolt
+      DATASOURCES_DEFAULT_PASSWORD: ${DB_PASSWORD}
+      EMAIL_DEFAULT_FROM: ${SMTP_FROM:?defina SMTP_FROM no .env}
+      EMAIL_DEFAULT_FROM_NAME: ${SMTP_FROM_NAME:-Eurydice}
+      EMAIL_TRANSPORT_DEFAULT_HOST: ${SMTP_HOST:?defina SMTP_HOST no .env}
+      EMAIL_TRANSPORT_DEFAULT_PORT: ${SMTP_PORT:-587}
+      EMAIL_TRANSPORT_DEFAULT_USERNAME: ${SMTP_USER:-}
+      EMAIL_TRANSPORT_DEFAULT_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_TRANSPORT_DEFAULT_TLS: ${SMTP_TLS:-true}
+      # hardening: ninguém se cadastra sozinho, ninguém troca o SMTP pela tela,
+      # e a API não confirma se um e-mail existe
+      PASSBOLT_REGISTRATION_PUBLIC: "false"
+      PASSBOLT_SECURITY_SMTP_SETTINGS_ENDPOINTS_DISABLED: "true"
+      PASSBOLT_SECURITY_PREVENT_EMAIL_ENUMERATION: "true"
+      PASSBOLT_META_TITLE: ${BRAND_TITLE:-Eurydice | Cofre de senhas}
+    volumes:
+      - gpg:/etc/passbolt/gpg
+      - jwt:/etc/passbolt/jwt
+    # internal: só a borda e o sync chegam nele; egress: saída para o SMTP (sem porta publicada)
+    networks: [internal, egress]
+    command: ["/usr/bin/wait-for.sh", "-t", "0", "db:3306", "--", "/docker-entrypoint.sh"]
+
+  edge:
+    # Login no provedor de identidade (OIDC) antes de chegar ao Passbolt.
+    # Suspendeu no diretório = perdeu o acesso ao servidor.
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    restart: unless-stopped
+    depends_on: [passbolt]
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?defina OIDC_ISSUER_URL no .env}
+      OAUTH2_PROXY_CLIENT_ID: ${OIDC_CLIENT_ID:?defina OIDC_CLIENT_ID no .env}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?defina OIDC_CLIENT_SECRET no .env}
+      OAUTH2_PROXY_COOKIE_SECRET: "${COOKIE_SECRET:?defina COOKIE_SECRET no .env (veja o .env.example)}"
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_EXPIRE: ${COOKIE_EXPIRE:-12h}
+      OAUTH2_PROXY_REDIRECT_URL: ${PUBLIC_URL}/oauth2/callback
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      # só quem está nesta lista entra (o mesmo arquivo que alimenta o eurydice-sync)
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: /etc/eurydice/emails.txt
+      OAUTH2_PROXY_UPSTREAMS: https://passbolt:443/
+      # o certificado do Passbolt é interno (autoassinado) e só circula na rede interna do compose
+      OAUTH2_PROXY_SSL_UPSTREAM_INSECURE_SKIP_VERIFY: "true"
+      OAUTH2_PROXY_PASS_HOST_HEADER: "true"
+      OAUTH2_PROXY_REVERSE_PROXY: ${BEHIND_PROXY:-false}
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      # ícones da aba carregam sem login (não expõem nada)
+      OAUTH2_PROXY_SKIP_AUTH_ROUTES: "GET=^/favicon.*,GET=^/img/favicon/.*,GET=^/apple-touch-icon.*"
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+    volumes:
+      - ./edge/emails.txt:/etc/eurydice/emails.txt:ro
+    ports:
+      # coloque um terminador TLS (Caddy, nginx, Cloudflare Tunnel...) na frente desta porta
+      - "${EDGE_BIND:-127.0.0.1:4180}:4180"
+    networks: [internal, public]
+
+  sync:
+    build: ../sync
+    image: eurydice-sync:local
+    profiles: [sync] # não sobe no "up": roda por timer (docker compose run --rm sync)
+    environment:
+      EURYDICE_URL: https://passbolt:443
+      EURYDICE_SOURCE: /etc/eurydice/emails.txt
+      EURYDICE_CA_FILE: /run/secrets/passbolt.crt
+      EURYDICE_PROTECTED: ${SYNC_PROTECTED:-}
+      EURYDICE_MAX_CHANGES: ${SYNC_MAX_CHANGES:-3}
+      EURYDICE_APPLY: ${SYNC_APPLY:-false}
+    volumes:
+      - ./edge/emails.txt:/etc/eurydice/emails.txt:ro
+      - ./secrets/bot.key:/run/secrets/bot.key:ro
+      - ./secrets/bot.pass:/run/secrets/bot.pass:ro
+      - ./secrets/passbolt.crt:/run/secrets/passbolt.crt:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+
+volumes:
+  db:
+  gpg:
+  jwt:
+
+networks:
+  internal:
+    internal: true
+  public: {}
+  egress: {}

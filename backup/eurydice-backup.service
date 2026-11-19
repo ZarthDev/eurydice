@@ -1,0 +1,11 @@
+[Unit]
+Description=Backup cifrado do Eurydice
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# ajuste o caminho para onde você clonou o repositório
+ExecStart=/opt/eurydice/backup/eurydice-backup.sh
+Environment=BACKUP_DIR=/var/backups/eurydice
+# Environment=RCLONE_REMOTE=cofre-backup:eurydice
